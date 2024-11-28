@@ -5,7 +5,7 @@ from transformers import AutoModelForCausalLM
 
 class EstimatorPruningSNR:
     """
-    计算的SNR
+    Calculate the SNR
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -15,9 +15,9 @@ class EstimatorPruningSNR:
             self.device = "cpu"
     
     def model_weights_dict(self, model, fp16_conversion=False):
-        res_dict = {}   # key：模块/层 名称，vlaue: 对应的矩阵参数
-        for n, m in model.named_modules():      # 遍历整个模型，取出需要计算SNR的参数
-            if isinstance(m, torch.nn.Linear):          # 剪枝实际上是对矩阵进行操作的，Linear层就是。过滤掉非Linear的层
+        res_dict = {}   # key: module/layer name, value: corresponding matrix parameter
+        for n, m in model.named_modules():      # Traverse the entire model, extract parameters that need SNR calculation
+            if isinstance(m, torch.nn.Linear):          # Pruning is essentially an operation on matrices, and Linear layers are such. Filter out non-Linear layers
                 res_dict[n] = m.weight.to(device=self.device)
 
         if fp16_conversion:
@@ -27,37 +27,37 @@ class EstimatorPruningSNR:
             return res_dict
 
     def estimate_snr(self, E_w, mse):
-        # 计算SNR
+        # Calculate SNR
         if mse.item() > 0.0:
             pruning_snr = 10 * np.log10(E_w.item() / mse.item())
         else:
-            # 当mse=0，说明两个组参数是一样的，并没有剪枝
+            # When mse=0, it means the two sets of parameters are the same, and no pruning has occurred
             pruning_snr = np.Inf
         return pruning_snr
 
     
     def estimate_mse(self, tensor_base, tensor_pruning):
-        # 计算两个tensor的MSE
-        mse = torch.mean((tensor_base - tensor_pruning) ** 2)   # 计算当前模块MSE,即E[(W-F(W)}^2]
-        num_elements = tensor_base.numel()  # 统计tensor的元素个数
+        # Calculate the MSE between two tensors
+        mse = torch.mean((tensor_base - tensor_pruning) ** 2)   # Calculate the current module's MSE, i.e., E[(W-F(W)]^2
+        num_elements = tensor_base.numel()  # Count the number of elements in the tensor
         
-        E_w = torch.mean((tensor_base) ** 2)    # 计算base模型当前模块参数中的平均期望，即，E(W^2)
+        E_w = torch.mean((tensor_base) ** 2)    # Calculate the mean expectation of the current module parameters in the base model, i.e., E(W^2)
         
         return mse, E_w, num_elements
         
 
     def estimate(self, base_model, pruning_model, every_layer=True):
         '''
-        base_model: 基准模型，这里指未剪枝模型
-        pruning_model：待评价模型，指剪枝后的模型
+        base_model: Reference model, here referring to the non-pruned model
+        pruning_model: Model to be evaluated, referring to the pruned model
         '''
-        base_model_dict = self.model_weights_dict(base_model)   # 获取base模型的Linear层的参数
-        pruning_model_dict = self.model_weights_dict(pruning_model)   # 获取pruning模型的Linear层的参数
+        base_model_dict = self.model_weights_dict(base_model)   # Get the Linear layer parameters of the base model
+        pruning_model_dict = self.model_weights_dict(pruning_model)   # Get the Linear layer parameters of the pruning model
         
         mes_dict = {}
-        for name, weight_base in base_model_dict.items():    # 遍历每个Linear层的参数
-            weight_pruning =  pruning_model_dict[name]       # 取出剪枝模型的对应位置的权重参数
-            mse_item, E_w_item, num_elements = self.estimate_mse(weight_base, weight_pruning)  # 计算出一组Linear参数的MSE、E(W^2)
+        for name, weight_base in base_model_dict.items():    # Iterate over the parameters of each Linear layer
+            weight_pruning =  pruning_model_dict[name]       # Extract the corresponding weight parameters in the pruned model
+            mse_item, E_w_item, num_elements = self.estimate_mse(weight_base, weight_pruning)  # Calculate the MSE and E(W^2) for a set of Linear parameters
             mes_dict[name] = {
                 "mse": mse_item,
                 "E_w": E_w_item,
@@ -67,7 +67,7 @@ class EstimatorPruningSNR:
                 SNR_i = self.estimate_snr(E_w_item, mse_item)
                 print(f"{name}: {SNR_i}")
         
-        # 计算总的MSE,和E(W^2)
+        # Calculate the total MSE and E(W^2)
         mse_all = 0
         E_w_all = 0
         num_elements_all = 0
@@ -80,14 +80,14 @@ class EstimatorPruningSNR:
         
         SNR_db = self.estimate_snr(E_w, mse)
         
-        print(f"总的SNR： {SNR_db}")
+        print(f"Total SNR: {SNR_db}")
         return SNR_db
 
 class MetricAnalyzer:
     def __init__(self, base_model_path=None, device=None, every_layer=False) -> None:
         self.base_model_path = base_model_path
         self.pruning_model_path = None
-        if device is None:          # 不指定GPU，则使用默认
+        if device is None:          # If GPU is not specified, use default
             self.device = 'auto'
         self.device = device
         
@@ -97,11 +97,11 @@ class MetricAnalyzer:
             self.base_model = None
             
         self.pruning_model = None
-        self.every_layer = every_layer  # 是否打印每一层的SNR结果，默认Fasle
+        self.every_layer = every_layer  # Whether to print the SNR results for each layer, default is False
         self.estimator_snr = EstimatorPruningSNR()
         
     def load_model(self, model_path, torch_dtype=torch.float16, device='auto'):
-        # 加载模型
+        # Load model
         model = AutoModelForCausalLM.from_pretrained(
             model_path, 
             torch_dtype=torch_dtype, 
@@ -112,16 +112,16 @@ class MetricAnalyzer:
         return model
     
     def analyzer(self, pruning_model_path, base_model_path=None):
-        if self.base_model is None:     # 初始化若没有给base_model,则这个位置必须要指定
-            assert base_model_path is not None, "请指定base_model的路径"
+        if self.base_model is None:     # If base_model is not provided during initialization, it must be specified here
+            assert base_model_path is not None, "Please specify the path for base_model"
             self.base_model_path = base_model_path
             self.base_model = self.load_model(self.base_model_path, self.device)
             
         self.pruning_model_path = pruning_model_path
-        self.pruning_model = self.load_model(self.pruning_model_path, self.device)   # 加载待评测的模型
+        self.pruning_model = self.load_model(self.pruning_model_path, self.device)   # Load the model to be evaluated
         
-        base_model_name = os.path.basename(os.path.normpath(self.base_model_path))  # 获取模型名称（以目录名）
-        pruning_model_name = os.path.basename(os.path.normpath(self.pruning_model_path))    # 获取模型名称（以目录名）
+        base_model_name = os.path.basename(os.path.normpath(self.base_model_path))  # Get the model name (as directory name)
+        pruning_model_name = os.path.basename(os.path.normpath(self.pruning_model_path))    # Get the model name (as directory name)
         
         print(f"============  {base_model_name} vs {pruning_model_name}  ============")
         self.estimator_snr.estimate(self.base_model, self.pruning_model, every_layer=self.every_layer)
@@ -129,20 +129,21 @@ class MetricAnalyzer:
         
 
 if __name__ == "__main__":
-    base_model_path = "./various-sized models/RWKV_rwkv-4-1b5-pile"     # 剪枝前的模型路径
-    pruning_model_path = "./wanda-main/out/1b5/unstructured_sparsegpt_0.5"  # 剪枝后的模型路径
-    every_layer = False     # 是否输出每一层的SNR，默认Fasle
+    base_model_path = "./various-sized models/RWKV_rwkv-4-1b5-pile"     # Path to the model before pruning
+    pruning_model_path = "./wanda-main/out/1b5/unstructured_sparsegpt_0.5"  # Path to the pruned model
+    every_layer = False     # Whether to output the SNR for each layer, default is False
     metricanalyzer = MetricAnalyzer(base_model_path, every_layer=every_layer)
     metricanalyzer.analyzer(pruning_model_path)
 
-    # 下面是批量计算多个剪枝模型的方法
-    # pruning_model_path_1 = "./wanda-main/out/1b5"   # 剪枝模型的目录
+    # Below is the method for calculating multiple pruned models in batches
+    # pruning_model_path_1 = "./wanda-main/out/1b5"   # Directory of pruned models
     # model_list = os.listdir(pruning_model_path_1)
     # model_list.sort()
     # print(model_list)
     # for model_name in model_list:
     #     pruning_model_path = os.path.join(pruning_model_path_1, model_name)
     #     metricanalyzer.analyzer(pruning_model_path)
+
         
         
             
